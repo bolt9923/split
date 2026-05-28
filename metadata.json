@@ -1,0 +1,6 @@
+{
+  "name": "TeleSplit - Video Splitter & Bot Editor",
+  "description": "An interactive studio to divide long videos for Instagram Reels and YouTube Shorts with custom part overlay watermarks, plus a fully deployable Telegram Bot service.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
