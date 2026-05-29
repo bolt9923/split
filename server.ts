@@ -12,29 +12,55 @@ dotenv.config();
 let ffmpegPath = "ffmpeg";
 let ffprobePath = "ffprobe";
 
-async function initBinaries() {
+function initBinaries() {
   try {
-    const ffmpegInstaller = await import("@ffmpeg-installer/ffmpeg");
-    if (ffmpegInstaller && ffmpegInstaller.default && ffmpegInstaller.default.path) {
-      ffmpegPath = ffmpegInstaller.default.path;
-    } else if (ffmpegInstaller && (ffmpegInstaller as any).path) {
-      ffmpegPath = (ffmpegInstaller as any).path;
+    // Standard CommonJS requires are native inside the compiled dist/server.cjs
+    const req = typeof require !== "undefined" ? require : null;
+    if (req) {
+      const ffmpegInstaller = req("@ffmpeg-installer/ffmpeg");
+      if (ffmpegInstaller && ffmpegInstaller.path) {
+        ffmpegPath = ffmpegInstaller.path;
+      }
+      const ffprobeInstaller = req("@ffprobe-installer/ffprobe");
+      if (ffprobeInstaller && ffprobeInstaller.path) {
+        ffprobePath = ffprobeInstaller.path;
+      }
+      console.log("🔔 Logged (CommonJS require): Loaded portable binaries:", { ffmpegPath, ffprobePath });
+      return;
     }
-    console.log("🔔 Logged: Loaded portable @ffmpeg-installer/ffmpeg path:", ffmpegPath);
   } catch (e: any) {
-    console.log("ℹ️ Could not load portable @ffmpeg-installer/ffmpeg binary, using fallback:", e.message);
+    console.log("ℹ️ Could not load binaries via require. Attempting ES fallback import:", e.message);
   }
 
-  try {
-    const ffprobeInstaller = await import("@ffprobe-installer/ffprobe");
-    if (ffprobeInstaller && ffprobeInstaller.default && ffprobeInstaller.default.path) {
-      ffprobePath = ffprobeInstaller.default.path;
-    } else if (ffprobeInstaller && (ffprobeInstaller as any).path) {
-      ffprobePath = (ffprobeInstaller as any).path;
-    }
-    console.log("🔔 Logged: Loaded portable @ffprobe-installer/ffprobe path:", ffprobePath);
-  } catch (e: any) {
-    console.log("ℹ️ Could not load portable @ffprobe-installer/ffprobe binary, using fallback:", e.message);
+  // Backup dynamic imports for ESM or alternate compilation environments
+  if (ffmpegPath === "ffmpeg") {
+    import("@ffmpeg-installer/ffmpeg")
+      .then((m) => {
+        if (m && m.default && m.default.path) {
+          ffmpegPath = m.default.path;
+        } else if (m && (m as any).path) {
+          ffmpegPath = (m as any).path;
+        }
+        console.log("🔔 Logged (Dynamic import): Loaded portable @ffmpeg-installer/ffmpeg path:", ffmpegPath);
+      })
+      .catch((e) => {
+        console.log("ℹ️ Could not dynamically import @ffmpeg-installer/ffmpeg:", e.message);
+      });
+  }
+
+  if (ffprobePath === "ffprobe") {
+    import("@ffprobe-installer/ffprobe")
+      .then((m) => {
+        if (m && m.default && m.default.path) {
+          ffprobePath = m.default.path;
+        } else if (m && (m as any).path) {
+          ffprobePath = (m as any).path;
+        }
+        console.log("🔔 Logged (Dynamic import): Loaded portable @ffprobe-installer/ffprobe path:", ffprobePath);
+      })
+      .catch((e) => {
+        console.log("ℹ️ Could not dynamically import @ffprobe-installer/ffprobe:", e.message);
+      });
   }
 }
 
@@ -775,7 +801,7 @@ if (process.env.NODE_ENV !== "production") {
     
     app.listen(PORT, "0.0.0.0", async () => {
       console.log(`Development Server is running on http://localhost:${PORT}`);
-      await initBinaries();
+      initBinaries();
       startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
     });
   });
@@ -788,7 +814,7 @@ if (process.env.NODE_ENV !== "production") {
 
   app.listen(PORT, "0.0.0.0", async () => {
     console.log(`Production Server running on port ${PORT}`);
-    await initBinaries();
+    initBinaries();
     startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
   });
 }
