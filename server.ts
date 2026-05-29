@@ -3,6 +3,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
+import { spawn } from "child_process";
+import fs from "fs";
 
 dotenv.config();
 
@@ -10,6 +12,308 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
 app.use(express.json());
+
+// Background Long-Polling Telegram Bot Integration
+async function startTelegramBotPolling() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.log("ℹ️ TELEGRAM_BOT_TOKEN is not configured. Direct web control dashboard is live. Telegram background polling offline.");
+    return;
+  }
+
+  console.log("🚀 TELEGRAM_BOT_TOKEN detected! Booting integrated video-splitting background client...");
+  let offset = 0;
+
+  const poll = async () => {
+    try {
+      const response = await fetch(`https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=15`);
+      const data = await response.json() as any;
+
+      if (data && data.ok && data.result) {
+        for (const update of data.result) {
+          offset = update.update_id + 1;
+          handleTelegramUpdate(update, token).catch(e => console.error("Error handling Telegram update:", e));
+        }
+      }
+    } catch (err: any) {
+      console.error("Polling stream delay or connectivity issue:", err.message);
+      await new Promise(r => setTimeout(r, 6000));
+    }
+    setTimeout(poll, 150);
+  };
+
+  poll();
+}
+
+async function handleTelegramUpdate(update: any, token: string) {
+  const message = update.message;
+  if (!message) return;
+
+  const chatId = message.chat.id;
+  const text = message.text;
+  
+  const video = message.video || (message.document && message.document.mime_type?.startsWith("video/") ? message.document : null);
+
+  const sendText = async (txt: string, replyId?: number) => {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: txt,
+          parse_mode: "Markdown",
+          reply_to_message_id: replyId
+        })
+      });
+    } catch (e) {
+      console.error("Err sending text:", e);
+    }
+  };
+
+  const sendAction = async (action: string) => {
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, action })
+      });
+    } catch (e) {}
+  };
+
+  // /start command
+  if (text && text.startsWith("/start")) {
+    await sendText(
+      `👋 *Hari Om! Welcome to TeleSplit Video Master Bot!* 🎬\n\n` +
+      `Your bot is running perfectly now direct from Heroku! No secondary Python processes needed.\n\n` +
+      `*How to split videos in instant high quality:*\n` +
+      `1️⃣ *Upload continuous video* directly within this chat.\n` +
+      `2️⃣ Enter the split strategy in the caption:\n` +
+      `   • Enter a number like \`3\` to clip video inside *3 equal segments*.\n` +
+      `   • Enter a number like \`30\` or \`59\` to split recursively every *30/59 seconds intervals*.\n` +
+      `3️⃣ Or simply *reply to any sent video* of yours with a number (e.g. \`60\`) and I will process it instantly!\n\n` +
+      `Give it a try by uploading an MP4/MOV file! ✨`
+    );
+    return;
+  }
+
+  let splitValue = 30; // default split
+  let targetVideo = video;
+
+  if (video && message.caption) {
+    const val = parseInt(message.caption.trim());
+    if (!isNaN(val) && val > 0) {
+      splitValue = val;
+    }
+  }
+
+  // Reply configuration
+  if (!targetVideo && text && message.reply_to_message) {
+    const replyMsg = message.reply_to_message;
+    const isReplyVideo = replyMsg.video || (replyMsg.document && replyMsg.document.mime_type?.startsWith("video/") ? replyMsg.document : null);
+    if (isReplyVideo) {
+      const val = parseInt(text.trim());
+      if (!isNaN(val) && val > 0) {
+        splitValue = val;
+        targetVideo = isReplyVideo;
+      }
+    }
+  }
+
+  if (!targetVideo) {
+    if (text) {
+      await sendText("⚠️ Please upload your video file directly to the bot, or reply to a video with your split parameter! \n*(e.g. Send '30' to cut into 30s clips)*");
+    }
+    return;
+  }
+
+  const statusMsg = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: "⚡ *Downloading original clip from Telegram cloud logs...* Please hold.",
+      parse_mode: "Markdown",
+      reply_to_message_id: message.message_id
+    })
+  });
+  const statusJson = await statusMsg.json() as any;
+  const statusId = statusJson?.result?.message_id;
+
+  const updateStatus = async (newText: string) => {
+    if (!statusId) return;
+    try {
+      await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          message_id: statusId,
+          text: newText,
+          parse_mode: "Markdown"
+        })
+      });
+    } catch {}
+  };
+
+  try {
+    const fileId = targetVideo.file_id;
+    const fileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
+    const fileJson = await fileRes.json() as any;
+    if (!fileJson.ok || !fileJson.result?.file_path) {
+      throw new Error("Cannot query file stream download path from Telegram servers.");
+    }
+
+    const remotePath = fileJson.result.file_path;
+    const downloadUrl = `https://api.telegram.org/file/bot${token}/${remotePath}`;
+
+    const tempInput = path.join(process.cwd(), `input_${fileId}.mp4`);
+    const outputDir = path.join(process.cwd(), `splits_${fileId}`);
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    // Direct download
+    await sendAction("upload_document");
+    const downloadRes = await fetch(downloadUrl);
+    const downloadBuf = Buffer.from(await downloadRes.arrayBuffer());
+    fs.writeFileSync(tempInput, downloadBuf);
+
+    await updateStatus("🎬 *Video cached! Running FFmpeg codec analyst...*");
+
+    // Grab actual duration via ffprobe
+    const duration = await new Promise<number>((resolve, reject) => {
+      const p = spawn("ffprobe", [
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        tempInput
+      ]);
+      let out = "";
+      p.stdout.on("data", (d) => out += d.toString());
+      p.on("close", (code) => {
+        if (code === 0) resolve(parseFloat(out.trim()));
+        else reject(new Error("ffprobe meta diagnostic failed"));
+      });
+      p.on("error", reject);
+    });
+
+    let totalParts = 1;
+    let clipDuration = splitValue;
+
+    if (splitValue < 10) {
+      totalParts = splitValue;
+      clipDuration = Math.ceil(duration / totalParts);
+    } else {
+      clipDuration = splitValue;
+      totalParts = Math.ceil(duration / clipDuration);
+    }
+
+    await updateStatus(`✂️ *Segmenting original scene:* duration *${duration.toFixed(1)}s*.\nCreating *${totalParts} parts* (~${clipDuration}s clip intervals)...`);
+
+    const generatedFiles: string[] = [];
+
+    for (let i = 0; i < totalParts; i++) {
+      const startSec = i * clipDuration;
+      if (startSec >= duration) break;
+
+      const currentPartNum = i + 1;
+      const partLabel = `PART ${currentPartNum}/${totalParts}`;
+      const outputFilename = path.join(outputDir, `part_${currentPartNum}.mp4`);
+
+      await sendAction("record_video");
+
+      // FFmpeg dynamic drawing filter parameters for high visual engagement
+      const overlayTextFilter = `drawtext=text='${partLabel}':x=(w-text_w)/2:y=80:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=15`;
+
+      const args = [
+        "-y",
+        "-ss", startSec.toString(),
+        "-t", clipDuration.toString(),
+        "-i", tempInput,
+        "-vf", overlayTextFilter,
+        "-c:v", "libx264",
+        "-preset", "superfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        outputFilename
+      ];
+
+      await new Promise<void>((resolve, reject) => {
+        const ffmpegJob = spawn("ffmpeg", args);
+        ffmpegJob.on("close", (code) => {
+          if (code === 0) {
+            generatedFiles.push(outputFilename);
+            resolve();
+          } else {
+            // Attempt standard stream copy fallback if drawtext filter rejects custom fonts/shapes on backend
+            const fallbackArgs = [
+              "-y",
+              "-ss", startSec.toString(),
+              "-t", clipDuration.toString(),
+              "-i", tempInput,
+              "-c", "copy",
+              outputFilename
+            ];
+            const fallbackJob = spawn("ffmpeg", fallbackArgs);
+            fallbackJob.on("close", (sc) => {
+              if (sc === 0) {
+                generatedFiles.push(outputFilename);
+                resolve();
+              } else {
+                reject(new Error(`Both FFmpeg high-render filter and stream copy failed.`));
+              }
+            });
+          }
+        });
+        ffmpegJob.on("error", reject);
+      });
+    }
+
+    await updateStatus(`🚀 *Splitting finished! Syncing ${generatedFiles.length} clips to Telegram chat...*`);
+
+    for (let i = 0; i < generatedFiles.length; i++) {
+      const pathFile = generatedFiles[i];
+      const partNum = i + 1;
+      await sendAction("upload_video");
+
+      const form = new FormData();
+      form.append("chat_id", chatId.toString());
+      form.append("caption", `🎬 *Segment ${partNum}/${generatedFiles.length} Output*\n⏱️ Duration: ~${clipDuration}s | TeleSplit Studio`);
+
+      const fileStream = fs.readFileSync(pathFile);
+      const videoBlob = new Blob([fileStream], { type: "video/mp4" });
+      form.append("video", videoBlob, `part_${partNum}.mp4`);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+        method: "POST",
+        body: form
+      });
+    }
+
+    if (statusId) {
+      await fetch(`https://api.telegram.org/bot${token}/deleteMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, message_id: statusId })
+      });
+    }
+
+    await sendText(`✅ *TeleSplit Engine delivered successfully!* enjoy your viral clips.`);
+
+    // Cleanup files securely to minimize container storage footprint
+    if (fs.existsSync(tempInput)) fs.unlinkSync(tempInput);
+    if (fs.existsSync(outputDir)) {
+      fs.rmSync(outputDir, { recursive: true, force: true });
+    }
+
+  } catch (err: any) {
+    console.error("Split failure:", err);
+    await updateStatus(`❌ *Process Interrupted:* ${err.message || err}`);
+  }
+}
 
 // Initialize Gemini Client Lazily/Safely with custom developer build agent tag
 let ai: GoogleGenAI | null = null;
@@ -414,6 +718,7 @@ if (process.env.NODE_ENV !== "production") {
     
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`Development Server is running on http://localhost:${PORT}`);
+      startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
     });
   });
 } else {
@@ -425,5 +730,6 @@ if (process.env.NODE_ENV !== "production") {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Production Server running on port ${PORT}`);
+    startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
   });
 }
