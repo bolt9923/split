@@ -5,8 +5,30 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { spawn } from "child_process";
 import fs from "fs";
+import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
+import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 
 dotenv.config();
+
+// Resolve portable or environment-configured FFmpeg and FFprobe binaries
+let ffmpegPath = "ffmpeg";
+let ffprobePath = "ffprobe";
+
+try {
+  if (ffmpegInstaller && ffmpegInstaller.path) {
+    ffmpegPath = ffmpegInstaller.path;
+  }
+} catch (e) {
+  console.log("Could not load portable @ffmpeg-installer/ffmpeg binary, using system fallback.");
+}
+
+try {
+  if (ffprobeInstaller && ffprobeInstaller.path) {
+    ffprobePath = ffprobeInstaller.path;
+  }
+} catch (e) {
+  console.log("Could not load portable @ffprobe-installer/ffprobe binary, using system fallback.");
+}
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -182,21 +204,35 @@ async function handleTelegramUpdate(update: any, token: string) {
     await updateStatus("🎬 *Video cached! Running FFmpeg codec analyst...*");
 
     // Grab actual duration via ffprobe
-    const duration = await new Promise<number>((resolve, reject) => {
-      const p = spawn("ffprobe", [
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        tempInput
-      ]);
-      let out = "";
-      p.stdout.on("data", (d) => out += d.toString());
-      p.on("close", (code) => {
-        if (code === 0) resolve(parseFloat(out.trim()));
-        else reject(new Error("ffprobe meta diagnostic failed"));
+    let duration = 30;
+    try {
+      duration = await new Promise<number>((resolve, reject) => {
+        const p = spawn(ffprobePath, [
+          "-v", "error",
+          "-show_entries", "format=duration",
+          "-of", "default=noprint_wrappers=1:nokey=1",
+          tempInput
+        ]);
+        let out = "";
+        p.stdout.on("data", (d) => out += d.toString());
+        p.on("close", (code) => {
+          if (code === 0) {
+            const val = parseFloat(out.trim());
+            if (!isNaN(val) && val > 0) {
+              resolve(val);
+            } else {
+              reject(new Error("Invalid duration parse format"));
+            }
+          } else {
+            reject(new Error("ffprobe meta diagnostic failed"));
+          }
+        });
+        p.on("error", reject);
       });
-      p.on("error", reject);
-    });
+    } catch (err: any) {
+      console.warn("⚠️ Local ffprobe is missing or failed. Falling back to Telegram duration info:", err.message);
+      duration = targetVideo.duration || 30;
+    }
 
     let totalParts = 1;
     let clipDuration = splitValue;
@@ -242,12 +278,19 @@ async function handleTelegramUpdate(update: any, token: string) {
       ];
 
       await new Promise<void>((resolve, reject) => {
-        const ffmpegJob = spawn("ffmpeg", args);
+        const ffmpegJob = spawn(ffmpegPath, args);
+        let jobError: any = null;
+
+        ffmpegJob.on("error", (err) => {
+          jobError = err;
+        });
+
         ffmpegJob.on("close", (code) => {
-          if (code === 0) {
+          if (code === 0 && !jobError) {
             generatedFiles.push(outputFilename);
             resolve();
           } else {
+            console.warn(`⚠️ FFmpeg high-render overlay failed. Attempting direct fast stream copy backup. Details:`, jobError || code);
             // Attempt standard stream copy fallback if drawtext filter rejects custom fonts/shapes on backend
             const fallbackArgs = [
               "-y",
@@ -257,18 +300,24 @@ async function handleTelegramUpdate(update: any, token: string) {
               "-c", "copy",
               outputFilename
             ];
-            const fallbackJob = spawn("ffmpeg", fallbackArgs);
+            const fallbackJob = spawn(ffmpegPath, fallbackArgs);
+            let fallbackError: any = null;
+
+            fallbackJob.on("error", (err) => {
+              fallbackError = err;
+            });
+
             fallbackJob.on("close", (sc) => {
-              if (sc === 0) {
+              if (sc === 0 && !fallbackError) {
                 generatedFiles.push(outputFilename);
                 resolve();
               } else {
-                reject(new Error(`Both FFmpeg high-render filter and stream copy failed.`));
+                const finalErr = fallbackError || new Error(`Exit code ${sc}`);
+                reject(new Error(`Both FFmpeg high-render filter and fast stream copy fallback failed: ${finalErr.message}`));
               }
             });
           }
         });
-        ffmpegJob.on("error", reject);
       });
     }
 
