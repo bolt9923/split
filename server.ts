@@ -5,8 +5,6 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import { spawn } from "child_process";
 import fs from "fs";
-import ffmpegInstaller from "@ffmpeg-installer/ffmpeg";
-import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 
 dotenv.config();
 
@@ -14,20 +12,30 @@ dotenv.config();
 let ffmpegPath = "ffmpeg";
 let ffprobePath = "ffprobe";
 
-try {
-  if (ffmpegInstaller && ffmpegInstaller.path) {
-    ffmpegPath = ffmpegInstaller.path;
+async function initBinaries() {
+  try {
+    const ffmpegInstaller = await import("@ffmpeg-installer/ffmpeg");
+    if (ffmpegInstaller && ffmpegInstaller.default && ffmpegInstaller.default.path) {
+      ffmpegPath = ffmpegInstaller.default.path;
+    } else if (ffmpegInstaller && (ffmpegInstaller as any).path) {
+      ffmpegPath = (ffmpegInstaller as any).path;
+    }
+    console.log("🔔 Logged: Loaded portable @ffmpeg-installer/ffmpeg path:", ffmpegPath);
+  } catch (e: any) {
+    console.log("ℹ️ Could not load portable @ffmpeg-installer/ffmpeg binary, using fallback:", e.message);
   }
-} catch (e) {
-  console.log("Could not load portable @ffmpeg-installer/ffmpeg binary, using system fallback.");
-}
 
-try {
-  if (ffprobeInstaller && ffprobeInstaller.path) {
-    ffprobePath = ffprobeInstaller.path;
+  try {
+    const ffprobeInstaller = await import("@ffprobe-installer/ffprobe");
+    if (ffprobeInstaller && ffprobeInstaller.default && ffprobeInstaller.default.path) {
+      ffprobePath = ffprobeInstaller.default.path;
+    } else if (ffprobeInstaller && (ffprobeInstaller as any).path) {
+      ffprobePath = (ffprobeInstaller as any).path;
+    }
+    console.log("🔔 Logged: Loaded portable @ffprobe-installer/ffprobe path:", ffprobePath);
+  } catch (e: any) {
+    console.log("ℹ️ Could not load portable @ffprobe-installer/ffprobe binary, using fallback:", e.message);
   }
-} catch (e) {
-  console.log("Could not load portable @ffprobe-installer/ffprobe binary, using system fallback.");
 }
 
 const app = express();
@@ -765,8 +773,9 @@ if (process.env.NODE_ENV !== "production") {
   }).then((vite) => {
     app.use(vite.middlewares);
     
-    app.listen(PORT, "0.0.0.0", () => {
+    app.listen(PORT, "0.0.0.0", async () => {
       console.log(`Development Server is running on http://localhost:${PORT}`);
+      await initBinaries();
       startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
     });
   });
@@ -777,8 +786,9 @@ if (process.env.NODE_ENV !== "production") {
     res.sendFile(path.join(distPath, 'index.html'));
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, "0.0.0.0", async () => {
     console.log(`Production Server running on port ${PORT}`);
+    await initBinaries();
     startTelegramBotPolling().catch(err => console.error("Error starting Telegram bot background loop:", err));
   });
 }
