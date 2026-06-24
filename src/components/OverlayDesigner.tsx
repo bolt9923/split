@@ -18,6 +18,7 @@ const POSITIONS: { value: OverlayPosition; label: string }[] = [
 ];
 
 const STYLES: { value: StylePreset; label: string; desc: string }[] = [
+  { value: 'tiktok-viral', label: '🔥 TikTok Viral Style', desc: 'Bold white italic text with black outline — exactly like viral TikTok/Reels Part videos.' },
   { value: 'classic-badge', label: 'Classic Rounded Badge', desc: 'Symmetric solid dark background with rounded container margins.' },
   { value: 'neon-glow', label: 'Neon Cyber Glow', desc: 'Glowing purple/magenta borders suited for modern podcast transcripts.' },
   { value: 'minimal-text', label: 'Minimal Dynamic Text', desc: 'No background container, uses elegant bold styling directly on frame.' },
@@ -61,6 +62,7 @@ export default function OverlayDesigner({ overlay, onChange }: OverlayDesignerPr
       {/* Common Templates Quick Tags Helper */}
       <div className="flex flex-wrap gap-1.5 pt-0.5">
         {[
+          'Part-{n}',
           'PART {n}',
           'EPISODE {n}',
           'PART {n} / {total}',
