@@ -2,7 +2,7 @@ export type PlatformPreset = 'instagram' | 'youtube' | 'custom';
 
 export type OverlayPosition = 'top-center' | 'bottom-center' | 'center' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
-export type StylePreset = 'classic-badge' | 'neon-glow' | 'minimal-text' | 'bottom-banner' | 'cyberpunk';
+export type StylePreset = 'classic-badge' | 'neon-glow' | 'minimal-text' | 'bottom-banner' | 'cyberpunk' | 'tiktok-viral';
 
 export type SplitType = 'duration' | 'parts';
 
