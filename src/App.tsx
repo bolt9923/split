@@ -19,9 +19,9 @@ export default function App() {
   });
 
   const [overlayConfig, setOverlayConfig] = useState<OverlayConfig>({
-    textTemplate: 'PART {n}',
+    textTemplate: 'Part-{n}',
     position: 'top-center',
-    stylePreset: 'classic-badge',
+    stylePreset: 'tiktok-viral',
     fontSize: 24,
     fontColor: '#FFFFFF',
     bgColor: 'rgba(0,0,0,0.7)',
