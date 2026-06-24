@@ -210,6 +210,18 @@ export default function InteractiveTimeline({ overlay, split, onAIHooksSuggested
           className: `${base} bg-yellow-400 text-black border-l-4 border-yellow-600 rounded-none skew-x-3 shadow-lg`,
           style: { color: '#000000', backgroundColor: '#FACC15' }
         };
+      case 'tiktok-viral':
+        return {
+          className: `bg-transparent text-white font-extrabold italic tracking-tight text-center`,
+          style: {
+            fontSize: '2rem',
+            fontFamily: 'Impact, Arial Black, sans-serif',
+            color: '#FFFFFF',
+            WebkitTextStroke: '2px #000000',
+            textShadow: '2px 2px 0px #000, -2px -2px 0px #000, 2px -2px 0px #000, -2px 2px 0px #000, 3px 3px 8px rgba(0,0,0,0.9)',
+            letterSpacing: '-0.5px',
+          }
+        };
       default:
         return {
           className: `${base}`,
@@ -543,4 +555,3 @@ export default function InteractiveTimeline({ overlay, split, onAIHooksSuggested
     </div>
   );
 }
-
